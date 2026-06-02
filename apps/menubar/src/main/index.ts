@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Tray, nativeImage, ipcMain, screen } from 'electron';
+import { app, BrowserWindow, Tray, nativeImage, ipcMain, screen, Menu } from 'electron';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -121,11 +121,6 @@ function isDev(): boolean {
   return !app.isPackaged;
 }
 
-function parseHexColor(hex: string): [number, number, number] {
-  const n = parseInt(hex.slice(1), 16);
-  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
-}
-
 const TRAY_DIM_COLORS: Record<ActivityState, string> = {
   idle: '#1a3d24',
   thinking: '#3d3518',
@@ -138,93 +133,98 @@ const TRAY_BULBS: { state: ActivityState; cx: number }[] = [
   { state: 'coding', cx: 33 },
 ];
 
-function setTrayPixel(
-  buffer: Buffer,
-  width: number,
-  x: number,
-  y: number,
-  r: number,
-  g: number,
-  b: number,
-  a = 255
-): void {
-  if (x < 0 || y < 0 || x >= width) return;
-  const idx = (y * width + x) * 4;
-  buffer[idx] = r;
-  buffer[idx + 1] = g;
-  buffer[idx + 2] = b;
-  buffer[idx + 3] = a;
+function hexToRgb(hex: string): [number, number, number] {
+  const v = parseInt(hex.replace('#', ''), 16);
+  return [(v >> 16) & 0xff, (v >> 8) & 0xff, v & 0xff];
 }
 
-function fillTrayCircle(
-  buffer: Buffer,
-  width: number,
-  height: number,
+function mix(a: number, b: number, t: number): number {
+  return a + (b - a) * t;
+}
+
+function smoothstep(edge0: number, edge1: number, x: number): number {
+  const t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)));
+  return t * t * (3 - 2 * t);
+}
+
+/** 在 RGBA buffer 上绘制实心圆（带 1px 抗锯齿边缘） */
+function drawCircle(
+  buf: Buffer,
+  stride: number,
   cx: number,
   cy: number,
-  radius: number,
   r: number,
-  g: number,
-  b: number
+  color: [number, number, number],
 ): void {
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      const dx = x + 0.5 - cx;
-      const dy = y + 0.5 - cy;
-      if (dx * dx + dy * dy <= radius * radius) {
-        setTrayPixel(buffer, width, x, y, r, g, b);
-      }
+  const [cr, cg, cb] = color;
+  const x0 = Math.floor(cx - r - 1);
+  const y0 = Math.floor(cy - r - 1);
+  const x1 = Math.ceil(cx + r + 1);
+  const y1 = Math.ceil(cy + r + 1);
+
+  for (let y = y0; y <= y1; y++) {
+    if (y < 0 || y >= buf.length / stride) continue;
+    for (let x = x0; x <= x1; x++) {
+      if (x < 0 || x >= stride / 4) continue;
+      const dist = Math.sqrt((x - cx) ** 2 + (y - cy) ** 2);
+      const alpha = 1 - smoothstep(r - 1, r + 1, dist);
+      if (alpha <= 0) continue;
+      const off = y * stride + x * 4;
+      // macOS nativeImage 期望 BGRA 字节序
+      buf[off] = mix(buf[off], cb, alpha);
+      buf[off + 1] = mix(buf[off + 1], cg, alpha);
+      buf[off + 2] = mix(buf[off + 2], cr, alpha);
+      buf[off + 3] = Math.max(buf[off + 3], Math.round(alpha * 255));
     }
   }
 }
 
-function fillTrayRoundedRect(
-  buffer: Buffer,
-  width: number,
-  height: number,
-  r: number,
-  g: number,
-  b: number,
-  radius: number
-): void {
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      const inCorner =
-        (x < radius && y < radius && (x - radius + 0.5) ** 2 + (y - radius + 0.5) ** 2 > radius ** 2) ||
-        (x >= width - radius && y < radius && (x - (width - radius) + 0.5) ** 2 + (y - radius + 0.5) ** 2 > radius ** 2) ||
-        (x < radius && y >= height - radius && (x - radius + 0.5) ** 2 + (y - (height - radius) + 0.5) ** 2 > radius ** 2) ||
-        (x >= width - radius &&
-          y >= height - radius &&
-          (x - (width - radius) + 0.5) ** 2 + (y - (height - radius) + 0.5) ** 2 > radius ** 2);
-      if (!inCorner) {
-        setTrayPixel(buffer, width, x, y, r, g, b);
-      }
-    }
-  }
-}
-
-/** 经典横排三灯：绿 | 黄 | 红，当前状态高亮 */
+/** 经典横排三灯：绿 | 黄 | 红，当前状态高亮。
+ *  使用原生 RGBA 像素 buffer 绘制，避免 SVG 在 macOS 菜单栏的色偏。 */
 function createTrayIcon(state: ActivityState): Electron.NativeImage {
-  const width = 44;
-  const height = 28;
-  const buffer = Buffer.alloc(width * height * 4);
+  const scale = 2;
+  const w = 44 * scale;   // 88
+  const h = 28 * scale;   // 56
+  const stride = w * 4;
+  const buf = Buffer.alloc(h * stride);
 
-  fillTrayRoundedRect(buffer, width, height, 38, 38, 42, 5);
+  // 深灰圆角矩形背景
+  const [br, bg, bb] = hexToRgb('#26262a');
+  const radius = 5 * scale;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      // 简单圆角：四角外的像素透明
+      let cornerAlpha = 1;
+      if (x < radius && y < radius) {
+        const d = Math.sqrt((x - radius) ** 2 + (y - radius) ** 2);
+        cornerAlpha = 1 - smoothstep(radius - 1, radius, d);
+      } else if (x >= w - radius && y < radius) {
+        const d = Math.sqrt((x - (w - 1 - radius)) ** 2 + (y - radius) ** 2);
+        cornerAlpha = 1 - smoothstep(radius - 1, radius, d);
+      } else if (x < radius && y >= h - radius) {
+        const d = Math.sqrt((x - radius) ** 2 + (y - (h - 1 - radius)) ** 2);
+        cornerAlpha = 1 - smoothstep(radius - 1, radius, d);
+      } else if (x >= w - radius && y >= h - radius) {
+        const d = Math.sqrt((x - (w - 1 - radius)) ** 2 + (y - (h - 1 - radius)) ** 2);
+        cornerAlpha = 1 - smoothstep(radius - 1, radius, d);
+      }
+      if (cornerAlpha <= 0) continue;
+      const off = y * stride + x * 4;
+      // macOS nativeImage 期望 BGRA 字节序
+      buf[off] = bb;
+      buf[off + 1] = bg;
+      buf[off + 2] = br;
+      buf[off + 3] = Math.round(cornerAlpha * 255);
+    }
+  }
 
-  const cy = height / 2;
-  const bulbRadius = 5.5;
-
+  // 三颗灯
   for (const bulb of TRAY_BULBS) {
     const hex = bulb.state === state ? COLORS[bulb.state] : TRAY_DIM_COLORS[bulb.state];
-    const [r, g, b] = parseHexColor(hex);
-    fillTrayCircle(buffer, width, height, bulb.cx, cy, bulbRadius, r, g, b);
+    drawCircle(buf, stride, bulb.cx * scale, 14 * scale, 5.5 * scale, hexToRgb(hex));
   }
 
-  const img = nativeImage.createFromBuffer(buffer, {
-    width,
-    height,
-    scaleFactor: 2,
-  });
+  const img = nativeImage.createFromBuffer(buf, { width: w, height: h, scaleFactor: scale });
   img.setTemplateImage(false);
   return img;
 }
@@ -388,21 +388,26 @@ function createPopup(): void {
   popupVisible = true;
 }
 
-function togglePopup(): void {
+function openPopup(): void {
   if (popup && !popup.isDestroyed()) {
-    if (popupVisible) {
-      if (!popupPinned) {
-        hidePopup();
-      } else {
-        popup.focus();
-      }
-    } else {
-      showPopup();
-    }
+    showPopup();
     return;
   }
-
   createPopup();
+}
+
+function buildTrayContextMenu(): Electron.Menu {
+  return Menu.buildFromTemplate([
+    {
+      label: '查看',
+      click: () => openPopup(),
+    },
+    { type: 'separator' },
+    {
+      label: '退出',
+      click: () => app.quit(),
+    },
+  ]);
 }
 
 app.whenReady().then(async () => {
@@ -425,7 +430,9 @@ app.whenReady().then(async () => {
 
   tray = new Tray(createTrayIcon(currentState));
   tray.setToolTip(`Cursor: ${currentState}`);
-  tray.on('click', togglePopup);
+  // 不设 setContextMenu，统一在 click 中显式弹出菜单，避免 macOS 自动弹出行为
+  tray.on('click', () => tray?.popUpContextMenu(buildTrayContextMenu()));
+  tray.on('right-click', () => tray?.popUpContextMenu(buildTrayContextMenu()));
 
   ipcMain.handle('get-state', () => ({
     state: currentState,
