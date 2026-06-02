@@ -2,11 +2,14 @@
 
 在 macOS 菜单栏以**经典红绿灯**样式展示 Cursor Agent 的工作状态：通过 Cursor 用户级 Hooks 监听 Agent 事件，由本地菜单栏应用实时显示绿 / 黄 / 红三灯。
 
+![Cursor 呼吸灯菜单栏效果图](images/效果图.png)
+
 | 灯色 | 状态 | 含义 |
 |------|------|------|
 | 绿灯 | `idle` | Agent 未在工作 |
 | 黄灯 | `thinking` | Agent 正在思考、读文件、执行非写文件类工具 |
 | 红灯 | `coding` | Agent 正在写 / 改代码 |
+
 
 ## 环境要求
 
