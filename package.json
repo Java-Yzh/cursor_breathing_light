@@ -1,0 +1,13 @@
+{
+  "name": "breathing-light",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "menubar": "npm run dev -w @breathing-light/menubar",
+    "build": "npm run build -w @breathing-light/menubar",
+    "install-hooks": "./scripts/install-hooks.sh"
+  }
+}
