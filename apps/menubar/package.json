@@ -1,13 +1,16 @@
 {
   "name": "@breathing-light/menubar",
   "version": "1.0.0",
+  "description": "Cursor Agent 状态菜单栏呼吸灯",
+  "author": "Java-Yzh",
   "private": true,
   "main": "./out/main/index.js",
   "scripts": {
     "dev": "env -u ELECTRON_RUN_AS_NODE electron-vite dev",
     "build": "electron-vite build",
     "preview": "env -u ELECTRON_RUN_AS_NODE electron-vite preview",
-    "start": "env -u ELECTRON_RUN_AS_NODE electron ."
+    "start": "env -u ELECTRON_RUN_AS_NODE electron .",
+    "dist": "npm run build && electron-builder --mac dmg"
   },
   "dependencies": {
     "react": "^19.1.0",
@@ -17,9 +20,27 @@
     "@types/react": "^19.1.2",
     "@types/react-dom": "^19.1.2",
     "@vitejs/plugin-react": "^4.4.1",
-    "electron": "^35.2.1",
+    "electron": "35.7.5",
+    "electron-builder": "^25.1.8",
     "electron-vite": "^3.1.0",
     "typescript": "^5.8.3",
     "vite": "^6.3.5"
+  },
+  "build": {
+    "appId": "com.example.cursor-breathing-light",
+    "productName": "Cursor_Breathing_Light",
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "category": "public.app-category.developer-tools"
+    },
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "out/**/*",
+      "package.json"
+    ]
   }
 }
