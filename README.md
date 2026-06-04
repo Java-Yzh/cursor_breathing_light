@@ -200,6 +200,77 @@ breathing_light/
 | `npm run build` | 构建 menubar 应用 |
 | `npm run menubar` | 开发模式启动（electron-vite dev） |
 | `cd apps/menubar && npm run start` | 生产模式启动（需先 build） |
+| `cd apps/menubar && npm run dist` | 构建并打包为 macOS `.dmg`（见下文） |
+
+## 打包为 DMG
+
+菜单栏应用使用 [electron-builder](https://www.electron.build/) 生成 macOS 安装镜像，配置见 `apps/menubar/package.json` 中的 `build` 字段。
+
+### 前置条件
+
+- 在 **macOS** 上执行（无法在 Linux / Windows 上打出可用的 `.dmg`）
+- 已完成 [快速开始](#快速开始) 中的依赖安装（`npm install`）
+- 本机已安装 **Xcode Command Line Tools**（首次打包时 electron-builder 可能调用系统工具）：
+
+```bash
+xcode-select --install
+```
+
+### 打包步骤
+
+1. 在项目根目录安装依赖（若尚未安装）：
+
+```bash
+npm install
+```
+
+国内网络可加上 Electron 镜像：
+
+```bash
+ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ npm install
+```
+
+2. 进入菜单栏应用目录并执行打包脚本（会先 `electron-vite build`，再生成 DMG）：
+
+```bash
+cd apps/menubar
+npm run dist
+```
+
+或在项目根目录通过 workspace 执行：
+
+```bash
+npm run dist -w @breathing-light/menubar
+```
+
+3. 等待命令结束。成功时终端会输出 electron-builder 的构建日志，产物位于：
+
+```text
+apps/menubar/release/
+├── Cursor_Breathing_Light-<版本号>.dmg    # 可分发的安装镜像
+└── mac-arm64/ 或 mac/                     # 未封装的 .app（调试用）
+    └── Cursor_Breathing_Light.app
+```
+
+当前 `package.json` 中 `version` 为 `1.0.0` 时，DMG 文件名一般为 **`Cursor_Breathing_Light-1.0.0.dmg`**。修改版本号后重新 `npm run dist` 即可得到新文件名。
+
+### 安装与分发说明
+
+1. 将 `release/` 目录下的 `.dmg` 拷贝到目标 Mac，双击打开。
+2. 将窗口中的 **`Cursor_Breathing_Light.app`** 拖入「应用程序」文件夹。
+3. 从启动台或「应用程序」中打开一次，确认菜单栏出现三灯图标。
+
+**重要**：`.dmg` 仅包含菜单栏应用，**不会**自动安装 Cursor Hooks。接收方仍需按 [快速开始 · 安装 Cursor Hooks](#2-安装-cursor-hooks仅需一次) 或 [新电脑安装说明](docs/new-machine-setup.md) 配置 `~/.cursor/hooks.json`，否则灯不会随 Agent 状态变化。
+
+### 常见问题
+
+| 现象 | 处理 |
+|------|------|
+| `npm run dist` 报错找不到 `electron-builder` | 在项目根执行 `npm install`，确保 `apps/menubar` 的 devDependencies 已安装 |
+| 其他机器提示「已损坏」或无法打开 | 当前未配置 Apple 开发者签名与公证；可在目标 Mac 上对 `.app` 执行 `xattr -cr "/Applications/Cursor_Breathing_Light.app"` 后再打开，或仅在「系统设置 → 隐私与安全性」中允许 |
+| 需要自定义应用名、图标、Bundle ID | 编辑 `apps/menubar/package.json` 的 `build.productName`、`build.appId` 及 `mac.icon` 等字段后重新打包 |
+
+`release/` 目录已在 `.gitignore` 中忽略，不会提交到 Git。
 
 ## 已知局限
 
